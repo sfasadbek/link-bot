@@ -1,158 +1,101 @@
-import asyncio
 import os
+import asyncio
 import logging
-import re
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiohttp import web
 import yt_dlp
 
 # 1. SOZLAMALAR
 TOKEN = "8429904690:AAHYJsFVU4gkYQWNwYZyk-7M2zTFiYvmmMk"
-ADMIN_ID = 6741153061
-CHANNELS = ["@iiv_qonuni"] 
+logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
-logging.basicConfig(level=logging.INFO)
 
-# Foydalanuvchi holatlarini saqlash uchun
-class SupportState(StatesGroup):
-    waiting_for_message = State()
+# 2. KOYEB UCHUN PORT (Bot o'chib qolmasligi uchun)
+async def handle(request):
+    return web.Response(text="Bot is running!")
 
-users_db = {} 
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8000)
+    await site.start()
 
-def clean_filename(name):
-    return re.sub(r'[\\/*?:"<>|]', "", name)
+# 3. YORDAM PANELI (Inline Keyboard)
+def help_keyboard():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🆘 Yordam", callback_data="help_info")],
+        [InlineKeyboardButton(text="👨‍💻 Dasturchi", url="https://t.me/SizningLoginingiz")]
+    ])
+    return keyboard
 
-async def check_sub(user_id):
-    for channel in CHANNELS:
-        try:
-            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
-            if member.status in ["member", "administrator", "creator"]:
-                return True
-        except Exception:
-            return False
-    return False
-
-def main_reply_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Yordam 🆘")]], resize_keyboard=True)
-
-def sub_keyboard():
-    buttons = [[InlineKeyboardButton(text="Kanalga a'zo bo'lish ➕", url="https://t.me/iiv_qonuni")],
-               [InlineKeyboardButton(text="Tasdiqlash ✅", callback_data="check_subscription")]]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-async def search_music(query):
-    ydl_opts = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True, 'extract_flat': True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch5:{query}", download=False)
-        return info['entries']
-
+# 4. START BUYRUQI
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    if await check_sub(message.from_user.id) or message.from_user.id == ADMIN_ID:
-        await message.answer("👋 Salom! Video linkini yuboring yoki qo'shiq nomini yozing.", reply_markup=main_reply_keyboard())
-    else:
-        await message.answer("⚠️ Botdan foydalanish uchun kanalimizga a'zo bo'ling:", reply_markup=sub_keyboard())
+    await message.answer(
+        "<b>Assalomu alaykum! ✨</b>\n\n"
+        "Men Instagram-dan video yuklovchi botman! 📥\n"
+        "Menga havola yuboring va men uni sizga yuboraman. 🚀",
+        parse_mode="HTML",
+        reply_markup=help_keyboard()
+    )
 
-@dp.callback_query(F.data == "check_subscription")
-async def check_callback(call: types.CallbackQuery):
-    if await check_sub(call.from_user.id):
-        await call.message.delete()
-        await call.message.answer("✅ Raxmat! Obuna tasdiqlandi.", reply_markup=main_reply_keyboard())
-    else:
-        await call.answer("❌ Siz hali obuna bo'lmadingiz!", show_alert=True)
-
-# YORDAM TUGMASI BOSILGANDA
-@dp.message(F.text == "Yordam 🆘")
-async def help_handler(message: types.Message, state: FSMContext):
-    await message.answer("📝 Adminga xabar yoki taklifingizni yozib yuboring:")
-    await state.set_state(SupportState.waiting_for_message)
-
-# ADMINGA XABAR YUBORISH
-@dp.message(SupportState.waiting_for_message)
-async def forward_to_admin(message: types.Message, state: FSMContext):
-    info = f"📩 YANGI XABAR\n👤 Kimdan: {message.from_user.full_name}\n🆔 ID: `{message.from_user.id}`\n\n📝 Xabar: {message.text}"
-    sent_msg = await bot.send_message(chat_id=ADMIN_ID, text=info)
-    
-    # Kelajakda javob berish uchun IDni saqlaymiz
-    users_db[sent_msg.message_id] = message.from_user.id
-    
-    await message.answer("✅ Xabaringiz adminga yuborildi. Tez orada javob olasiz.")
-    await state.clear()
-
-@dp.callback_query(F.data.startswith("music_"))
-async def download_music_callback(call: types.CallbackQuery):
-    video_id = call.data.split("_")[1]
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    status = await call.message.answer("📥 Musiqa yuklanmoqda...")
-    try:
-        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-            title = clean_filename(info.get('title', 'music'))
-        filename = f"{title}.m4a"
-        ydl_opts = {'format': 'bestaudio/best', 'outtmpl': filename}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            await asyncio.to_thread(ydl.download, [url])
-        await call.message.answer_audio(types.FSInputFile(filename))
-        await status.delete()
-        if os.path.exists(filename): os.remove(filename)
-    except Exception:
-        await status.edit_text("❌ Yuklashda xatolik!")
-
+# 5. INSTAGRAM YUKLOVCHI
 @dp.message()
-async def handle_all(message: types.Message):
-    # ADMIN JAVOB BERISHI (Reply orqali)
-    if message.reply_to_message and message.from_user.id == ADMIN_ID:
-        reply_id = message.reply_to_message.message_id
-        if reply_id in users_db:
-            user_id = users_db[reply_id]
-            try:
-                await bot.send_message(chat_id=user_id, text=f"📩 Admin javobi:\n\n{message.text}")
-                await message.answer("✅ Javobingiz yuborildi.")
-            except Exception:
-                await message.answer("❌ Foydalanuvchiga yuborib bo'lmadi.")
-        return
-
-    # ODDIY FOYDALANUVCHILAR UCHUN
-    if message.from_user.id != ADMIN_ID:
-        if not await check_sub(message.from_user.id):
-            await message.answer("⚠️ Avval kanalga a'zo bo'ling:", reply_markup=sub_keyboard())
-            return
-
-    # LINK BO'LSA
-    if message.text and ("http" in message.text):
-        status = await message.answer("⏳ Video yuklanmoqda...")
+async def download_insta(message: types.Message):
+    if "instagram.com" in message.text:
+        wait_msg = await message.answer("🔄 <b>Iltimos kuting, video tayyorlanmoqda...</b>", parse_mode="HTML")
+        
+        ydl_opts = {
+            'format': 'best',
+            'outtmpl': 'insta_video.mp4',
+            'noplaylist': True,
+        }
+        
         try:
-            ydl_opts = {'format': 'best', 'outtmpl': 'video.mp4'}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                await asyncio.to_thread(ydl.download, [message.text])
-            await message.answer_video(types.FSInputFile("video.mp4"), caption="✅ Tayyor!")
-            await status.delete()
-            if os.path.exists("video.mp4"): os.remove("video.mp4")
-        except Exception:
-            await status.edit_text("❌ Xatolik yuz berdi.")
+                ydl.download([message.text])
+            
+            video = types.FSInputFile("insta_video.mp4")
+            await message.answer_video(
+                video, 
+                caption="✅ <b>Video muvaffaqiyatli yuklandi!</b>\n\n@Instagram_Video_Bot 🚀", 
+                parse_mode="HTML"
+            )
+            os.remove("insta_video.mp4")
+        except Exception as e:
+            await message.answer(f"❌ <b>Xatolik yuz berdi:</b> {str(e)}", parse_mode="HTML")
+        finally:
+            await wait_msg.delete()
+    else:
+        await message.answer("⚠️ <b>Iltimos, faqat Instagram havolasini yuboring!</b>", parse_mode="HTML")
 
-    # QIDIRUV BO'LSA
-    elif message.text:
-        status = await message.answer("🔍 Qidirilmoqda...")
-        results = await search_music(message.text)
-        if not results:
-            await status.edit_text("❌ Topilmadi.")
-            return
-        text = "🎵 **Topilgan qo'shiqlar:**\n\n"
-        row_buttons = []
-        for i, entry in enumerate(results, 1):
-            text += f"{i}. {entry['title']}\n"
-            row_buttons.append(InlineKeyboardButton(text=str(i), callback_data=f"music_{entry['id']}"))
-        await status.delete()
-        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[row_buttons]))
+# 6. CALLBACK (Tugma bosilganda yordam berish)
+@dp.callback_query(lambda c: c.data == "help_info")
+async def process_callback_help(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(
+        callback_query.from_user.id,
+        "📌 <b>Yordam bo'limi:</b>\n\n"
+        "1. Instagram-da videoni toping.\n"
+        "2. Linkini (havola) nusxalang.\n"
+        "3. Botga yuboring.\n"
+        "4. Bir necha soniya kuting! ⏳",
+        parse_mode="HTML"
+    )
 
+# 7. ISHGA TUSHIRISH
 async def main():
+    await start_web_server() # Koyeb uchun kerak
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
